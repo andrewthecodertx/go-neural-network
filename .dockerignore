@@ -1,0 +1,13 @@
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Local development
+*.md
+LICENSE
+saved_models/
+*.csv
