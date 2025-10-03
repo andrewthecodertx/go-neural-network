@@ -104,20 +104,16 @@ This project can also be run inside a Docker container, which handles all the se
 
 *   [Docker](https://www.docker.com/get-started) installed on your system.
 
-### Building the Image
-
-To build the Docker image, run the following command from the project root:
+### Build the image:
 
 ```bash
 docker build -t go-neuralnetwork .
 ```
 
-### Running the Container
-
-To run the application inside a Docker container, use the following command:
+### Run the container:
 
 ```bash
 docker run -it --rm go-neuralnetwork
 ```
 
-The `-it` flags are important for interacting with the TUI.
+The `-it` flags enable the interactive TUI interface.
