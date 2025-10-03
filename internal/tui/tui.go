@@ -36,7 +36,6 @@ type (
 
 func (m *Model) runTraining() tea.Cmd {
 	return func() tea.Msg {
-		// --- Input Validation ---
 		csvIndex, err := strconv.Atoi(m.trainingForm.inputs[0].Value())
 		if err != nil || csvIndex < 1 || csvIndex > len(m.trainingForm.csvFiles) {
 			return errorMsg{fmt.Errorf("invalid CSV file selection")}
@@ -128,7 +127,7 @@ func (m *Model) runTraining() tea.Cmd {
 }
 
 func findCsvFiles() tea.Msg {
-	files, err := filepath.Glob("*.csv")
+	files, err := filepath.Glob("assets/*.csv")
 	if err != nil {
 		return errorMsg{err}
 	}
