@@ -204,3 +204,48 @@ func (nn *NeuralNetwork) Train(inputs, targets [][]float64, epochs int, learning
 		}
 	}
 }
+
+// TrainWithVisualization trains the network with real-time visualization support
+func (nn *NeuralNetwork) TrainWithVisualization(inputs, targets [][]float64, epochs int, learningRate float64, errorGoal float64, progressChan chan<- any, vizChan chan<- [][]float64) {
+	defer close(progressChan)
+	if vizChan != nil {
+		defer close(vizChan)
+	}
+
+	for epoch := range make([]struct{}, epochs) {
+		totalError := 0.0
+		var lastActivations [][]float64
+
+		for i := range inputs {
+			hiddenOutputs, finalOutputs := nn.FeedForward(inputs[i])
+			nn.Backpropagate(inputs[i], targets[i], hiddenOutputs, finalOutputs, learningRate)
+
+			// Store activations for visualization (combine hidden + output)
+			if vizChan != nil {
+				lastActivations = make([][]float64, len(hiddenOutputs)+1)
+				copy(lastActivations, hiddenOutputs)
+				lastActivations[len(hiddenOutputs)] = make([]float64, len(finalOutputs))
+				copy(lastActivations[len(hiddenOutputs)], finalOutputs)
+			}
+
+			// Calculate mean squared error
+			for j := range targets[i] {
+				totalError += 0.5 * (targets[i][j] - finalOutputs[j]) * (targets[i][j] - finalOutputs[j])
+			}
+		}
+		avgError := totalError / float64(len(inputs))
+
+		// Send progress update
+		progressChan <- avgError
+
+		// Send visualization data every few epochs to avoid overwhelming the UI
+		if vizChan != nil && epoch%5 == 0 {
+			vizChan <- lastActivations
+		}
+
+		// Stop training if the error goal is reached
+		if avgError < errorGoal {
+			break
+		}
+	}
+}

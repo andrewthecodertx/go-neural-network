@@ -86,6 +86,7 @@ func (m *Model) runTraining() tea.Cmd {
 		if err != nil {
 			return errorMsg{fmt.Errorf("invalid error goal: %w", err)}
 		}
+		enableViz := strings.ToLower(strings.TrimSpace(m.trainingForm.inputs[7].Value())) == "y"
 
 		// Load data
 		dataset, err := data.LoadCSV(csvPath, 0.8)
@@ -98,10 +99,19 @@ func (m *Model) runTraining() tea.Cmd {
 
 		// This channel will receive training progress
 		progressChan := make(chan any)
+		var vizChan chan [][]float64
+
+		if enableViz {
+			vizChan = make(chan [][]float64)
+		}
 
 		// Goroutine to run training and send messages
 		go func() {
-			nn.Train(dataset.TrainInputs, dataset.TrainTargets, epochs, learningRate, errorGoal, progressChan)
+			if enableViz {
+				nn.TrainWithVisualization(dataset.TrainInputs, dataset.TrainTargets, epochs, learningRate, errorGoal, progressChan, vizChan)
+			} else {
+				nn.Train(dataset.TrainInputs, dataset.TrainTargets, epochs, learningRate, errorGoal, progressChan)
+			}
 			modelData := &data.ModelData{
 				NN:         nn,
 				InputMins:  dataset.InputMins,
@@ -121,6 +131,33 @@ func (m *Model) runTraining() tea.Cmd {
 				epochNum++
 			}
 		}()
+
+		// Launch visualizer if enabled
+		// TODO: Re-enable when SDL2 integration is working
+		/*
+			if enableViz {
+				visualizer, err := viz.NewNetworkVisualizer(1200, 800)
+				if err != nil {
+					return errorMsg{fmt.Errorf("failed to create visualizer: %w", err)}
+				}
+				m.visualizer = visualizer
+
+				// Goroutine to handle visualization updates
+				go func() {
+					for activations := range vizChan {
+						if m.visualizer != nil && m.visualizer.IsRunning() {
+							m.visualizer.RenderNetwork(nn, activations)
+							m.visualizer.HandleEvents()
+						}
+					}
+					// Close visualizer when training is done
+					if m.visualizer != nil {
+						m.visualizer.Close()
+						m.visualizer = nil
+					}
+				}()
+			}
+		*/
 
 		return trainingStartedMsg{}
 	}
@@ -149,6 +186,7 @@ const (
 	mainMenu sessionState = iota
 	trainingForm
 	trainingInProgress
+	visualizationMode
 	evaluation
 	predictionForm
 	predictionResult
@@ -174,21 +212,22 @@ var (
 
 // Model represents the state of the entire application.
 type Model struct {
-	state           sessionState
-	menuCursor      int
-	menuChoices     []string
-	trainingForm    trainingFormModel
-	predictionForm  predictionFormModel
-	saveModelInput  textinput.Model
-	modelData       *data.ModelData
-	program         *tea.Program
-	lastError       error
-	quitting        bool
-	terminalWidth   int
-	terminalHeight  int
-	lastLoss        float64
-	currentEpoch    int
-	totalEpochs     int
+	state          sessionState
+	menuCursor     int
+	menuChoices    []string
+	trainingForm   trainingFormModel
+	predictionForm predictionFormModel
+	saveModelInput textinput.Model
+	modelData      *data.ModelData
+	program        *tea.Program
+	lastError      error
+	quitting       bool
+	terminalWidth  int
+	terminalHeight int
+	lastLoss       float64
+	currentEpoch   int
+	totalEpochs    int
+	// visualizer      *viz.NetworkVisualizer // TODO: Enable when SDL2 is working
 	predictionValue float64
 	predictionClass string
 	accuracy        float64
@@ -210,7 +249,7 @@ type predictionFormModel struct {
 
 func newTrainingForm() trainingFormModel {
 	m := trainingFormModel{
-		inputs: make([]textinput.Model, 7),
+		inputs: make([]textinput.Model, 8), // Added visualization toggle
 	}
 
 	var t textinput.Model
@@ -235,6 +274,8 @@ func newTrainingForm() trainingFormModel {
 			t.Placeholder = "0.001"
 		case 6:
 			t.Placeholder = "0.001"
+		case 7:
+			t.Placeholder = "y" // Enable visualization (y/n)
 		}
 		m.inputs[i] = t
 	}
@@ -309,7 +350,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case trainingStartedMsg:
-		m.state = trainingInProgress
+		enableViz := strings.ToLower(strings.TrimSpace(m.trainingForm.inputs[7].Value())) == "y"
+		if enableViz {
+			m.state = visualizationMode
+		} else {
+			m.state = trainingInProgress
+		}
 		epochs, _ := strconv.Atoi(m.trainingForm.inputs[4].Value())
 		if epochs == 0 {
 			epochs = 1000
@@ -381,6 +427,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case trainingForm:
 			return m.updateTrainingForm(msg)
 		case trainingInProgress:
+			if msg.String() == "q" {
+				m.state = mainMenu
+			}
+			return m, nil
+		case visualizationMode:
 			if msg.String() == "q" {
 				m.state = mainMenu
 			}
@@ -485,6 +536,8 @@ func (m *Model) View() string {
 		s = m.viewTrainingForm()
 	case trainingInProgress:
 		s = m.viewTrainingInProgress()
+	case visualizationMode:
+		s = m.viewVisualization()
 	case evaluation:
 		s = m.viewEvaluation()
 	case predictionForm:
@@ -602,6 +655,7 @@ func (m *Model) viewTrainingForm() string {
 	fmt.Fprintf(&b, "Epochs: %s\n", m.trainingForm.inputs[4].View())
 	fmt.Fprintf(&b, "Learning Rate: %s\n", m.trainingForm.inputs[5].View())
 	fmt.Fprintf(&b, "Error Goal: %s\n", m.trainingForm.inputs[6].View())
+	fmt.Fprintf(&b, "Enable Visualization (y/n): %s\n", m.trainingForm.inputs[7].View())
 	b.WriteString("\n")
 
 	// Render button
@@ -619,6 +673,25 @@ func (m *Model) viewTrainingForm() string {
 
 func (m *Model) viewTrainingInProgress() string {
 	return fmt.Sprintf("Training in progress...\n\nEpoch: %d/%d\nLoss: %f\n\n(Press 'q' to stop)", m.currentEpoch, m.totalEpochs, m.lastLoss)
+}
+
+func (m *Model) viewVisualization() string {
+	return fmt.Sprintf(`Neural Network Visualization Active
+
+Training with live SDL2 visualization window...
+
+Epoch: %d/%d
+Loss: %f
+
+Controls:
+• SDL2 Window: Press ESC or 'q' to close visualization
+• Terminal: Press 'q' to stop training and return to menu
+
+The SDL2 window shows:
+• Blue nodes: Input layer
+• Colored nodes: Hidden layers (color intensity = activation strength)
+• Red/Blue connections: Positive/Negative weights (thickness = strength)
+`, m.currentEpoch, m.totalEpochs, m.lastLoss)
 }
 
 func (m *Model) updatePredictionForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

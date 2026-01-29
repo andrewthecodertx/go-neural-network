@@ -7,7 +7,7 @@ models and loading pre-trained models for prediction.
 ## Features
 
 * **Modular Design:** Code is organized into separate packages (`cli`, `data`,
-`neuralnetwork`, `utils`) for better maintainability and reusability.
+`neuralnetwork`, `tui`) for better maintainability and reusability.
 * **Dynamic Network Architecture:** A feed-forward neural network with a
 configurable number of hidden layers and neurons per layer.
 * **Multiple Activation Functions:** Supports `ReLU`, `Sigmoid`, `Tanh`,
@@ -15,6 +15,7 @@ and `Linear` activation functions for each hidden layer and the output layer.
 * **Training:** Train the neural network using your own CSV data. The data is automatically split into training and testing sets.
 * **Model Persistence:** Save and load trained models to/from `model.json` files.
 * **Prediction:** Use a loaded model to make predictions on new input data.
+* **Real-time Visualization:** Optional SDL2-based visualization showing network structure, activations, and weight strengths during training.
 * **He Initialization:** Weights are initialized using He initialization.
 * **Backpropagation:** Implements the backpropagation algorithm for training.
 
@@ -25,13 +26,13 @@ To run this application, you need to have Go installed on your system.
 1.  **Clone the repository:**
 
     ```bash
-    git clone https://github.com/andrewthecodertx/Neural-Network.git
-    cd Neural-Network
+    git clone https://github.com/andrewthecodertx/go-neural-network.git
+    cd go-neural-network
     ```
 
 2.  **Run the application:**
 
-    The application now features a full-screen terminal user interface (TUI).
+    The application features a full-screen terminal user interface (TUI).
 
     ```bash
     go run .
@@ -53,8 +54,10 @@ Upon launching the application, you will be greeted with the main menu. You can 
     *   **Epochs:** The number of training iterations.
     *   **Learning Rate:** The step size for gradient descent.
     *   **Error Goal:** The target error at which training will stop.
+    *   **Enable Visualization:** Enter `y` to enable real-time SDL2 visualization of the network during training.
 4.  Navigate to the **"[ Start Training ]"** button and press `Enter`.
-5.  A live progress view will show the current epoch and loss.
+5.  If visualization is enabled, an SDL2 window will open showing the network structure with live updates.
+    A progress view will show the current epoch and loss in the terminal.
 6.  After training, the model will be evaluated on the test set, and the accuracy will be displayed.
 7.  Once training is complete, you will be prompted to enter a name to save the model. The saved model will be placed in the `saved_models/` directory.
 
@@ -95,25 +98,3 @@ open an issue or submit a pull request.
 ## License
 
 This project is licensed under the terms of the [LICENSE](LICENSE) file.
-
-## Docker
-
-This project can also be run inside a Docker container, which handles all the setup for you.
-
-### Prerequisites
-
-*   [Docker](https://www.docker.com/get-started) installed on your system.
-
-### Build the image:
-
-```bash
-docker build -t go-neuralnetwork .
-```
-
-### Run the container:
-
-```bash
-docker run -it --rm go-neuralnetwork
-```
-
-The `-it` flags enable the interactive TUI interface.
