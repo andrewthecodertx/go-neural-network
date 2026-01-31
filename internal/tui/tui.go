@@ -28,11 +28,27 @@ type (
 		modelData *data.ModelData
 		testData  *data.Dataset
 	}
-	evaluationFinishedMsg             struct{ accuracy float64 }
+	evaluationFinishedMsg             struct{ result data.EvaluationResult }
 	predictionResultMsg               struct{ result float64 }
 	predictionResultClassificationMsg struct{ result string }
 	errorMsg                          struct{ err error }
 )
+
+// waitForEpoch returns a tea.Cmd that waits for the next epoch progress or training completion.
+func waitForEpoch(progressChan <-chan float64, epochNum int, doneChan <-chan trainingFinishedMsg) tea.Cmd {
+	return func() tea.Msg {
+		select {
+		case loss, ok := <-progressChan:
+			if !ok {
+				// Channel closed, wait for done signal
+				return <-doneChan
+			}
+			return epochCompletedMsg{epochNum: epochNum, loss: loss}
+		case msg := <-doneChan:
+			return msg
+		}
+	}
+}
 
 func (m *Model) runTraining() tea.Cmd {
 	return func() tea.Msg {
@@ -98,20 +114,21 @@ func (m *Model) runTraining() tea.Cmd {
 		nn := neuralnetwork.InitNetwork(dataset.InputSize, hiddenLayers, dataset.OutputSize, hiddenActivations, outputActivation)
 
 		// This channel will receive training progress
-		progressChan := make(chan any)
+		progressChan := make(chan float64)
+		doneChan := make(chan trainingFinishedMsg, 1)
 		var vizChan chan [][]float64
 
 		if enableViz {
 			vizChan = make(chan [][]float64)
 		}
 
-		// Goroutine to run training and send messages
+		// Store channels on model for epoch listening
+		m.progressChan = progressChan
+		m.doneChan = doneChan
+
+		// Goroutine to run training
 		go func() {
-			if enableViz {
-				nn.TrainWithVisualization(dataset.TrainInputs, dataset.TrainTargets, epochs, learningRate, errorGoal, progressChan, vizChan)
-			} else {
-				nn.Train(dataset.TrainInputs, dataset.TrainTargets, epochs, learningRate, errorGoal, progressChan)
-			}
+			nn.Train(dataset.TrainInputs, dataset.TrainTargets, epochs, learningRate, errorGoal, progressChan, vizChan)
 			modelData := &data.ModelData{
 				NN:         nn,
 				InputMins:  dataset.InputMins,
@@ -120,44 +137,8 @@ func (m *Model) runTraining() tea.Cmd {
 				TargetMaxs: dataset.TargetMaxs,
 				ClassMap:   dataset.ClassMap,
 			}
-			m.program.Send(trainingFinishedMsg{modelData: modelData, testData: dataset})
+			doneChan <- trainingFinishedMsg{modelData: modelData, testData: dataset}
 		}()
-
-		// Goroutine to listen for progress and update the TUI
-		go func() {
-			epochNum := 1
-			for loss := range progressChan {
-				m.program.Send(epochCompletedMsg{epochNum: epochNum, loss: loss.(float64)})
-				epochNum++
-			}
-		}()
-
-		// Launch visualizer if enabled
-		// TODO: Re-enable when SDL2 integration is working
-		/*
-			if enableViz {
-				visualizer, err := viz.NewNetworkVisualizer(1200, 800)
-				if err != nil {
-					return errorMsg{fmt.Errorf("failed to create visualizer: %w", err)}
-				}
-				m.visualizer = visualizer
-
-				// Goroutine to handle visualization updates
-				go func() {
-					for activations := range vizChan {
-						if m.visualizer != nil && m.visualizer.IsRunning() {
-							m.visualizer.RenderNetwork(nn, activations)
-							m.visualizer.HandleEvents()
-						}
-					}
-					// Close visualizer when training is done
-					if m.visualizer != nil {
-						m.visualizer.Close()
-						m.visualizer = nil
-					}
-				}()
-			}
-		*/
 
 		return trainingStartedMsg{}
 	}
@@ -219,7 +200,6 @@ type Model struct {
 	predictionForm predictionFormModel
 	saveModelInput textinput.Model
 	modelData      *data.ModelData
-	program        *tea.Program
 	lastError      error
 	quitting       bool
 	terminalWidth  int
@@ -228,9 +208,11 @@ type Model struct {
 	currentEpoch   int
 	totalEpochs    int
 	// visualizer      *viz.NetworkVisualizer // TODO: Enable when SDL2 is working
-	predictionValue float64
-	predictionClass string
-	accuracy        float64
+	progressChan     <-chan float64
+	doneChan         <-chan trainingFinishedMsg
+	predictionValue  float64
+	predictionClass  string
+	evaluationResult data.EvaluationResult
 }
 
 // trainingFormModel holds the state for the training configuration form.
@@ -361,52 +343,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			epochs = 1000
 		}
 		m.totalEpochs = epochs
-		return m, nil
+		return m, waitForEpoch(m.progressChan, 1, m.doneChan)
 
 	case epochCompletedMsg:
 		m.currentEpoch = msg.epochNum
 		m.lastLoss = msg.loss
-		return m, nil
+		return m, waitForEpoch(m.progressChan, msg.epochNum+1, m.doneChan)
 
 	case trainingFinishedMsg:
 		m.modelData = msg.modelData
 		m.state = evaluation
 		return m, func() tea.Msg {
-			correct := 0
-			for i, input := range msg.testData.TestInputs {
-				_, prediction := m.modelData.NN.FeedForward(input)
-				if msg.testData.ClassMap != nil {
-					max := -1.0
-					maxIndex := -1
-					for i, val := range prediction {
-						if val > max {
-							max = val
-							maxIndex = i
-						}
-					}
-
-					actualIndex := -1
-					for i, val := range msg.testData.TestTargets[i] {
-						if val == 1.0 {
-							actualIndex = i
-							break
-						}
-					}
-
-					if maxIndex == actualIndex {
-						correct++
-					}
-				} else {
-					// This is a regression problem, so we can't calculate accuracy.
-					// We could calculate loss here instead.
-				}
-			}
-			accuracy := float64(correct) / float64(len(msg.testData.TestInputs))
-			return evaluationFinishedMsg{accuracy: accuracy}
+			result := data.Evaluate(msg.modelData, msg.testData.TestInputs, msg.testData.TestTargets)
+			return evaluationFinishedMsg{result: result}
 		}
 
 	case evaluationFinishedMsg:
-		m.accuracy = msg.accuracy
+		m.evaluationResult = msg.result
 		m.state = saveModelForm
 		return m, nil
 
@@ -556,7 +509,11 @@ func (m *Model) View() string {
 }
 
 func (m *Model) viewEvaluation() string {
-	return fmt.Sprintf("Evaluation complete!\n\nAccuracy: %.2f%%\n\n(Press enter to continue)", m.accuracy*100)
+	r := m.evaluationResult
+	if r.IsClassification {
+		return fmt.Sprintf("Evaluation complete!\n\nAccuracy: %.2f%%\n\n(Press enter to continue)", r.Accuracy*100)
+	}
+	return fmt.Sprintf("Evaluation complete!\n\nRMSE: %.6f\nR²:   %.4f\n\n(Press enter to continue)", r.RMSE, r.RSquared)
 }
 
 func (m *Model) updateTrainingForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -809,7 +766,12 @@ func (m *Model) runPrediction() tea.Cmd {
 			if err != nil {
 				return errorMsg{fmt.Errorf("invalid input value: %v", err)}
 			}
-			predictionInput[i] = (val - modelData.InputMins[i]) / (modelData.InputMaxs[i] - modelData.InputMins[i])
+			rangeVal := modelData.InputMaxs[i] - modelData.InputMins[i]
+			if rangeVal == 0 {
+				predictionInput[i] = 0
+			} else {
+				predictionInput[i] = (val - modelData.InputMins[i]) / rangeVal
+			}
 		}
 
 		_, predictionOutput := modelData.NN.FeedForward(predictionInput)
@@ -888,7 +850,6 @@ func (m *Model) viewError() string {
 func Start() {
 	m := New()
 	p := tea.NewProgram(m, tea.WithAltScreen())
-	m.program = p
 
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Alas, there's been an error: %v", err)
