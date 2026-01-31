@@ -29,12 +29,11 @@ func InitNetwork(inputs int, hiddenLayers []int, outputs int, hiddenActivations 
 	// Initialize hidden layers
 	for i, layerSize := range hiddenLayers {
 		hiddenWeights[i] = make([][]float64, layerSize)
-		// He initialization for weights
-		heInit := math.Sqrt(2.0 / float64(prevLayerSize))
+		initScale := weightInitScale(hiddenActivations[i], prevLayerSize)
 		for j := range hiddenWeights[i] {
 			hiddenWeights[i][j] = make([]float64, prevLayerSize)
 			for k := range hiddenWeights[i][j] {
-				hiddenWeights[i][j][k] = rand.NormFloat64() * heInit
+				hiddenWeights[i][j][k] = rand.NormFloat64() * initScale
 			}
 		}
 		hiddenBiases[i] = make([]float64, layerSize)
@@ -43,12 +42,11 @@ func InitNetwork(inputs int, hiddenLayers []int, outputs int, hiddenActivations 
 
 	// Initialize output layer
 	outputWeights := make([][]float64, outputs)
-	// He initialization for weights
-	heInitOutput := math.Sqrt(2.0 / float64(prevLayerSize))
+	initScale := weightInitScale(outputActivation, prevLayerSize)
 	for i := range outputWeights {
 		outputWeights[i] = make([]float64, prevLayerSize)
 		for j := range outputWeights[i] {
-			outputWeights[i][j] = rand.NormFloat64() * heInitOutput
+			outputWeights[i][j] = rand.NormFloat64() * initScale
 		}
 	}
 	outputBiases := make([]float64, outputs)
@@ -66,6 +64,17 @@ func InitNetwork(inputs int, hiddenLayers []int, outputs int, hiddenActivations 
 	}
 	nn.SetActivationFunctions()
 	return nn
+}
+
+// weightInitScale returns the standard deviation for weight initialization based on the activation function.
+// He initialization (sqrt(2/fan_in)) is used for ReLU, Xavier/Glorot (sqrt(1/fan_in)) for sigmoid, tanh, and linear.
+func weightInitScale(activation string, fanIn int) float64 {
+	switch activation {
+	case "relu":
+		return math.Sqrt(2.0 / float64(fanIn))
+	default:
+		return math.Sqrt(1.0 / float64(fanIn))
+	}
 }
 
 // SetActivationFunctions sets the activation functions for each layer.
@@ -180,39 +189,20 @@ func (nn *NeuralNetwork) Backpropagate(inputs []float64, targets []float64, hidd
 }
 
 // Train trains the neural network using the provided training data, number of epochs, learning rate, and error goal.
-func (nn *NeuralNetwork) Train(inputs, targets [][]float64, epochs int, learningRate float64, errorGoal float64, progressChan chan<- any) {
-	defer close(progressChan) // Ensure the channel is closed when training is done
-
-	for range make([]struct{}, epochs) {
-		totalError := 0.0
-		for i := range inputs {
-			hiddenOutputs, finalOutputs := nn.FeedForward(inputs[i])
-			nn.Backpropagate(inputs[i], targets[i], hiddenOutputs, finalOutputs, learningRate)
-			// Calculate mean squared error
-			for j := range targets[i] {
-				totalError += 0.5 * (targets[i][j] - finalOutputs[j]) * (targets[i][j] - finalOutputs[j])
-			}
-		}
-		avgError := totalError / float64(len(inputs))
-
-		// Send progress update
-		progressChan <- avgError
-
-		// Stop training if the error goal is reached
-		if avgError < errorGoal {
-			break
-		}
-	}
-}
-
-// TrainWithVisualization trains the network with real-time visualization support
-func (nn *NeuralNetwork) TrainWithVisualization(inputs, targets [][]float64, epochs int, learningRate float64, errorGoal float64, progressChan chan<- any, vizChan chan<- [][]float64) {
+// An optional vizChan can be provided for real-time visualization of activations; pass nil to disable.
+func (nn *NeuralNetwork) Train(inputs, targets [][]float64, epochs int, learningRate float64, errorGoal float64, progressChan chan<- float64, vizChan chan<- [][]float64) {
 	defer close(progressChan)
 	if vizChan != nil {
 		defer close(vizChan)
 	}
 
 	for epoch := range make([]struct{}, epochs) {
+		// Shuffle training data each epoch to avoid learning order-dependent patterns
+		rand.Shuffle(len(inputs), func(i, j int) {
+			inputs[i], inputs[j] = inputs[j], inputs[i]
+			targets[i], targets[j] = targets[j], targets[i]
+		})
+
 		totalError := 0.0
 		var lastActivations [][]float64
 

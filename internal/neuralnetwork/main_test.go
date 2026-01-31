@@ -204,7 +204,7 @@ func TestTrain(t *testing.T) {
 	epochs := 5000
 	learningRate := 0.1
 	errorGoal := 0.01
-	progressChan := make(chan any)
+	progressChan := make(chan float64)
 
 	go func() {
 		// Consume progress updates to prevent blocking
@@ -212,7 +212,7 @@ func TestTrain(t *testing.T) {
 		}
 	}()
 
-	nn.Train(inputs, targets, epochs, learningRate, errorGoal, progressChan)
+	nn.Train(inputs, targets, epochs, learningRate, errorGoal, progressChan, nil)
 
 	finalError := calculateMSE()
 
