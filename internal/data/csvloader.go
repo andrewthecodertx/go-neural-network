@@ -40,6 +40,39 @@ func SplitData(inputs, targets [][]float64, splitRatio float64) (trainInputs, tr
 	return
 }
 
+// findMinMax computes per-column min and max values for the given column indices in records.
+func findMinMax(records [][]string, columns int) (mins, maxs []float64, err error) {
+	mins = make([]float64, columns)
+	maxs = make([]float64, columns)
+	for i := range mins {
+		mins[i] = 1e9
+		maxs[i] = -1e9
+	}
+	for _, record := range records {
+		for i := 0; i < columns; i++ {
+			val, err := strconv.ParseFloat(record[i], 64)
+			if err != nil {
+				return nil, nil, fmt.Errorf("error parsing float in record %v: %w", record, err)
+			}
+			if val < mins[i] {
+				mins[i] = val
+			}
+			if val > maxs[i] {
+				maxs[i] = val
+			}
+		}
+	}
+	return mins, maxs, nil
+}
+
+// normalizeValue applies min-max normalization, returning 0 when max == min.
+func normalizeValue(val, min, max float64) float64 {
+	if max-min == 0 {
+		return 0
+	}
+	return (val - min) / (max - min)
+}
+
 func LoadCSV(filePath string, splitRatio float64) (*Dataset, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -60,42 +93,18 @@ func LoadCSV(filePath string, splitRatio float64) (*Dataset, error) {
 
 	if len(records) > 0 {
 		if _, err := strconv.ParseFloat(records[0][len(records[0])-1], 64); err != nil {
-			return LoadCSVForClassification(filePath, splitRatio)
+			return loadCSVForClassification(header, records, splitRatio)
 		}
-	}
-
-	// Reset reader and read records again
-	file.Seek(0, 0)
-	reader = csv.NewReader(file)
-	header, err = reader.Read()
-	if err != nil {
-		return nil, err
 	}
 
 	inputSize := len(header) - 1
 	outputSize := 1
+	totalCols := inputSize + outputSize
 
-	// Find min and max for each column to normalize the data
-	mins := make([]float64, inputSize+outputSize)
-	maxs := make([]float64, inputSize+outputSize)
-	for i := range mins {
-		mins[i] = 1e9
-		maxs[i] = -1e9
-	}
-
-	for _, record := range records {
-		for i := range mins {
-			val, err := strconv.ParseFloat(record[i], 64)
-			if err != nil {
-				return nil, err
-			}
-			if val < mins[i] {
-				mins[i] = val
-			}
-			if val > maxs[i] {
-				maxs[i] = val
-			}
-		}
+	// Find min and max for all columns
+	mins, maxs, err := findMinMax(records, totalCols)
+	if err != nil {
+		return nil, err
 	}
 
 	inputMins := mins[:inputSize]
@@ -110,20 +119,12 @@ func LoadCSV(filePath string, splitRatio float64) (*Dataset, error) {
 
 		for i := range inputRow {
 			val, _ := strconv.ParseFloat(record[i], 64)
-			if maxs[i]-mins[i] == 0 {
-				inputRow[i] = 0
-			} else {
-				inputRow[i] = (val - mins[i]) / (maxs[i] - mins[i])
-			}
+			inputRow[i] = normalizeValue(val, mins[i], maxs[i])
 		}
 
 		for i := range outputRow {
 			val, _ := strconv.ParseFloat(record[inputSize+i], 64)
-			if maxs[inputSize+i]-mins[inputSize+i] == 0 {
-				outputRow[i] = 0
-			} else {
-				outputRow[i] = (val - mins[inputSize+i]) / (maxs[inputSize+i] - mins[inputSize+i])
-			}
+			outputRow[i] = normalizeValue(val, mins[inputSize+i], maxs[inputSize+i])
 		}
 
 		inputs = append(inputs, inputRow)
@@ -165,6 +166,10 @@ func LoadCSVForClassification(filePath string, splitRatio float64) (*Dataset, er
 		return nil, err
 	}
 
+	return loadCSVForClassification(header, records, splitRatio)
+}
+
+func loadCSVForClassification(header []string, records [][]string, splitRatio float64) (*Dataset, error) {
 	inputSize := len(header) - 1
 	classMap := make(map[string]int)
 	classIndex := 0
@@ -180,26 +185,9 @@ func LoadCSVForClassification(filePath string, splitRatio float64) (*Dataset, er
 	outputSize := len(classMap)
 
 	// Find min and max for input columns to normalize the data
-	inputMins := make([]float64, inputSize)
-	inputMaxs := make([]float64, inputSize)
-	for i := range inputMins {
-		inputMins[i] = 1e9
-		inputMaxs[i] = -1e9
-	}
-
-	for _, record := range records {
-		for i := range inputMins {
-			val, err := strconv.ParseFloat(record[i], 64)
-			if err != nil {
-				return nil, fmt.Errorf("error parsing float in record %v: %w", record, err)
-			}
-			if val < inputMins[i] {
-				inputMins[i] = val
-			}
-			if val > inputMaxs[i] {
-				inputMaxs[i] = val
-			}
-		}
+	inputMins, inputMaxs, err := findMinMax(records, inputSize)
+	if err != nil {
+		return nil, err
 	}
 
 	var inputs, targets [][]float64
@@ -208,11 +196,7 @@ func LoadCSVForClassification(filePath string, splitRatio float64) (*Dataset, er
 		inputRow := make([]float64, inputSize)
 		for i := range inputRow {
 			val, _ := strconv.ParseFloat(record[i], 64)
-			if inputMaxs[i]-inputMins[i] == 0 {
-				inputRow[i] = 0
-			} else {
-				inputRow[i] = (val - inputMins[i]) / (inputMaxs[i] - inputMins[i])
-			}
+			inputRow[i] = normalizeValue(val, inputMins[i], inputMaxs[i])
 		}
 		inputs = append(inputs, inputRow)
 
