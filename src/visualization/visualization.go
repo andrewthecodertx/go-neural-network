@@ -1,15 +1,15 @@
+// Package visualization creaes the SDL graphical output
 package visualization
 
 import (
 	"fmt"
 	"math"
 
-	"go-neuralnetwork/internal/neuralnetwork"
+	"go-neuralnetwork/src/neuralnetwork"
 
 	"github.com/veandco/go-sdl2/sdl"
 )
 
-// NetworkVisualizer handles the SDL2 visualization of the neural network
 type NetworkVisualizer struct {
 	window   *sdl.Window
 	renderer *sdl.Renderer
@@ -18,7 +18,6 @@ type NetworkVisualizer struct {
 	height   int32
 }
 
-// NewNetworkVisualizer creates a new visualizer with SDL2 window
 func NewNetworkVisualizer(width, height int32) (*NetworkVisualizer, error) {
 	if err := sdl.Init(sdl.INIT_VIDEO); err != nil {
 		return nil, fmt.Errorf("failed to initialize SDL: %v", err)
@@ -34,7 +33,7 @@ func NewNetworkVisualizer(width, height int32) (*NetworkVisualizer, error) {
 
 	renderer, err := sdl.CreateRenderer(window, -1, sdl.RENDERER_ACCELERATED)
 	if err != nil {
-		window.Destroy()
+		_ = window.Destroy()
 		sdl.Quit()
 		return nil, fmt.Errorf("failed to create renderer: %v", err)
 	}
@@ -48,23 +47,20 @@ func NewNetworkVisualizer(width, height int32) (*NetworkVisualizer, error) {
 	}, nil
 }
 
-// Close cleans up SDL2 resources
 func (nv *NetworkVisualizer) Close() {
 	if nv.renderer != nil {
-		nv.renderer.Destroy()
+		_ = nv.renderer.Destroy()
 	}
 	if nv.window != nil {
-		nv.window.Destroy()
+		_ = nv.window.Destroy()
 	}
 	sdl.Quit()
 }
 
-// IsRunning returns whether the visualization is still active
 func (nv *NetworkVisualizer) IsRunning() bool {
 	return nv.running
 }
 
-// HandleEvents processes SDL events
 func (nv *NetworkVisualizer) HandleEvents() {
 	for event := sdl.PollEvent(); event != nil; event = sdl.PollEvent() {
 		switch e := event.(type) {
@@ -78,26 +74,21 @@ func (nv *NetworkVisualizer) HandleEvents() {
 	}
 }
 
-// Clear clears the screen with a background color
 func (nv *NetworkVisualizer) Clear() {
-	nv.renderer.SetDrawColor(20, 20, 30, 255) // Dark blue background
-	nv.renderer.Clear()
+	_ = nv.renderer.SetDrawColor(20, 20, 30, 255) // Dark blue background
+	_ = nv.renderer.Clear()
 }
 
-// Present updates the screen
 func (nv *NetworkVisualizer) Present() {
 	nv.renderer.Present()
 }
 
-// RenderNetwork renders the neural network structure
 func (nv *NetworkVisualizer) RenderNetwork(nn *neuralnetwork.NeuralNetwork, activations [][]float64) {
 	nv.Clear()
 
-	// Calculate layer positions
 	layerSpacing := float64(nv.width) / float64(len(nn.HiddenLayers)+2)
 	nodeRadius := int32(8)
 
-	// Draw input layer
 	inputX := layerSpacing / 2
 	inputYSpacing := float64(nv.height) / float64(nn.NumInputs+1)
 	for i := 0; i < nn.NumInputs; i++ {
@@ -105,9 +96,8 @@ func (nv *NetworkVisualizer) RenderNetwork(nn *neuralnetwork.NeuralNetwork, acti
 		nv.drawNode(int32(inputX), int32(y), nodeRadius, 0.5) // Input nodes are neutral
 	}
 
-	// Draw hidden layers
 	for layerIdx, layerSize := range nn.HiddenLayers {
-		x := layerSpacing * float64(layerIdx+1) + layerSpacing/2
+		x := layerSpacing*float64(layerIdx+1) + layerSpacing/2
 		ySpacing := float64(nv.height) / float64(layerSize+1)
 
 		for nodeIdx := 0; nodeIdx < layerSize; nodeIdx++ {
@@ -120,8 +110,7 @@ func (nv *NetworkVisualizer) RenderNetwork(nn *neuralnetwork.NeuralNetwork, acti
 		}
 	}
 
-	// Draw output layer
-	outputX := layerSpacing * float64(len(nn.HiddenLayers)+1) + layerSpacing/2
+	outputX := layerSpacing*float64(len(nn.HiddenLayers)+1) + layerSpacing/2
 	outputYSpacing := float64(nv.height) / float64(nn.NumOutputs+1)
 	for i := 0; i < nn.NumOutputs; i++ {
 		y := outputYSpacing * float64(i+1)
@@ -132,15 +121,12 @@ func (nv *NetworkVisualizer) RenderNetwork(nn *neuralnetwork.NeuralNetwork, acti
 		nv.drawNode(int32(outputX), int32(y), nodeRadius, activation)
 	}
 
-	// Draw connections
 	nv.drawConnections(nn)
 
 	nv.Present()
 }
 
-// drawNode draws a single neuron node with color based on activation
 func (nv *NetworkVisualizer) drawNode(x, y, radius int32, activation float64) {
-	// Color based on activation (blue for negative, red for positive)
 	intensity := math.Abs(activation)
 	if intensity > 1.0 {
 		intensity = 1.0
@@ -157,22 +143,19 @@ func (nv *NetworkVisualizer) drawNode(x, y, radius int32, activation float64) {
 		b = uint8(255 * intensity)
 	}
 
-	nv.renderer.SetDrawColor(r, g, b, 255)
-	nv.renderer.FillRect(&sdl.Rect{X: x - radius, Y: y - radius, W: radius * 2, H: radius * 2})
+	_ = nv.renderer.SetDrawColor(r, g, b, 255)
+	_ = nv.renderer.FillRect(&sdl.Rect{X: x - radius, Y: y - radius, W: radius * 2, H: radius * 2})
 
-	// Draw border
-	nv.renderer.SetDrawColor(255, 255, 255, 255)
-	nv.renderer.DrawRect(&sdl.Rect{X: x - radius, Y: y - radius, W: radius * 2, H: radius * 2})
+	_ = nv.renderer.SetDrawColor(255, 255, 255, 255)
+	_ = nv.renderer.DrawRect(&sdl.Rect{X: x - radius, Y: y - radius, W: radius * 2, H: radius * 2})
 }
 
-// drawConnections draws the weighted connections between layers
 func (nv *NetworkVisualizer) drawConnections(nn *neuralnetwork.NeuralNetwork) {
 	layerSpacing := float64(nv.width) / float64(len(nn.HiddenLayers)+2)
 
-	// Connections from input to first hidden layer
 	inputX := layerSpacing / 2
 	inputYSpacing := float64(nv.height) / float64(nn.NumInputs+1)
-	hiddenX := layerSpacing * 1 + layerSpacing/2
+	hiddenX := layerSpacing*1 + layerSpacing/2
 	hiddenYSpacing := float64(nv.height) / float64(nn.HiddenLayers[0]+1)
 
 	for i := 0; i < nn.NumInputs; i++ {
@@ -184,11 +167,10 @@ func (nv *NetworkVisualizer) drawConnections(nn *neuralnetwork.NeuralNetwork) {
 		}
 	}
 
-	// Connections between hidden layers
 	for layerIdx := 0; layerIdx < len(nn.HiddenLayers)-1; layerIdx++ {
-		fromX := layerSpacing * float64(layerIdx+1) + layerSpacing/2
+		fromX := layerSpacing*float64(layerIdx+1) + layerSpacing/2
 		fromYSpacing := float64(nv.height) / float64(nn.HiddenLayers[layerIdx]+1)
-		toX := layerSpacing * float64(layerIdx+2) + layerSpacing/2
+		toX := layerSpacing*float64(layerIdx+2) + layerSpacing/2
 		toYSpacing := float64(nv.height) / float64(nn.HiddenLayers[layerIdx+1]+1)
 
 		for fromNode := 0; fromNode < nn.HiddenLayers[layerIdx]; fromNode++ {
@@ -203,9 +185,9 @@ func (nv *NetworkVisualizer) drawConnections(nn *neuralnetwork.NeuralNetwork) {
 
 	// Connections from last hidden layer to output
 	if len(nn.HiddenLayers) > 0 {
-		hiddenX = layerSpacing * float64(len(nn.HiddenLayers)) + layerSpacing/2
+		hiddenX = layerSpacing*float64(len(nn.HiddenLayers)) + layerSpacing/2
 		hiddenYSpacing = float64(nv.height) / float64(nn.HiddenLayers[len(nn.HiddenLayers)-1]+1)
-		outputX := layerSpacing * float64(len(nn.HiddenLayers)+1) + layerSpacing/2
+		outputX := layerSpacing*float64(len(nn.HiddenLayers)+1) + layerSpacing/2
 		outputYSpacing := float64(nv.height) / float64(nn.NumOutputs+1)
 
 		for i := 0; i < nn.HiddenLayers[len(nn.HiddenLayers)-1]; i++ {
@@ -219,7 +201,6 @@ func (nv *NetworkVisualizer) drawConnections(nn *neuralnetwork.NeuralNetwork) {
 	}
 }
 
-// drawConnection draws a connection line with thickness based on weight
 func (nv *NetworkVisualizer) drawConnection(x1, y1, x2, y2 int32, weight float64) {
 	// Color based on weight (blue for negative, red for positive)
 	intensity := math.Abs(weight)
@@ -238,9 +219,8 @@ func (nv *NetworkVisualizer) drawConnection(x1, y1, x2, y2 int32, weight float64
 		b = uint8(255 * intensity)
 	}
 
-	nv.renderer.SetDrawColor(r, g, b, uint8(100+155*intensity)) // Alpha based on weight strength
+	_ = nv.renderer.SetDrawColor(r, g, b, uint8(100+155*intensity)) // Alpha based on weight strength
 
-	// Draw line (simplified - could be improved with thicker lines)
-	nv.renderer.DrawLine(x1, y1, x2, y2)
-}</content>
-<parameter name="filePath">internal/visualization/visualization.go
+	// TODO: possibly thicker lines?
+	_ = nv.renderer.DrawLine(x1, y1, x2, y2)
+}

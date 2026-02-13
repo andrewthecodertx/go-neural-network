@@ -78,7 +78,9 @@ func LoadCSV(filePath string, splitRatio float64) (*Dataset, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	reader := csv.NewReader(file)
 	header, err := reader.Read()
@@ -153,7 +155,9 @@ func LoadCSVForClassification(filePath string, splitRatio float64) (*Dataset, er
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	reader := csv.NewReader(file)
 	header, err := reader.Read()

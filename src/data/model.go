@@ -1,3 +1,4 @@
+// Package data takes datasets as CSV files and turns into arrays
 package data
 
 import (
@@ -5,7 +6,7 @@ import (
 	"math"
 	"os"
 
-	"go-neuralnetwork/internal/neuralnetwork"
+	"go-neuralnetwork/src/neuralnetwork"
 )
 
 // EvaluationResult holds the results of evaluating a model on test data.
@@ -112,7 +113,9 @@ func (md *ModelData) SaveModel(filePath string) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
@@ -124,7 +127,9 @@ func LoadModel(filePath string) (*ModelData, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	var md ModelData
 	decoder := json.NewDecoder(file)

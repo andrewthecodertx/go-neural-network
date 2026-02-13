@@ -1,3 +1,6 @@
+// Package neuralnetwork is the heart of the whole system!
+//
+// The package is responsible for training and back propagation.
 package neuralnetwork
 
 import (
@@ -62,7 +65,7 @@ func InitNetwork(inputs int, hiddenLayers []int, outputs int, hiddenActivations 
 		HiddenActivations: hiddenActivations,
 		OutputActivation:  outputActivation,
 	}
-	nn.SetActivationFunctions()
+	_ = nn.SetActivationFunctions()
 	return nn
 }
 

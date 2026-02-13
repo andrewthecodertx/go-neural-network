@@ -1,3 +1,4 @@
+// Package tui creates the console interaction
 package tui
 
 import (
@@ -7,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"go-neuralnetwork/internal/data"
-	"go-neuralnetwork/internal/neuralnetwork"
+	"go-neuralnetwork/src/data"
+	"go-neuralnetwork/src/neuralnetwork"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -145,7 +146,7 @@ func (m *Model) runTraining() tea.Cmd {
 }
 
 func findCsvFiles() tea.Msg {
-	files, err := filepath.Glob("assets/*.csv")
+	files, err := filepath.Glob("datasets/*.csv")
 	if err != nil {
 		return errorMsg{err}
 	}
@@ -153,7 +154,7 @@ func findCsvFiles() tea.Msg {
 }
 
 func findModels() tea.Msg {
-	files, err := filepath.Glob("saved_models/*.json")
+	files, err := filepath.Glob("models/*.json")
 	if err != nil {
 		return errorMsg{err}
 	}
@@ -715,7 +716,7 @@ func (m *Model) viewPredictionForm() string {
 
 	b.WriteString("Available Models:\n")
 	if len(m.predictionForm.models) == 0 {
-		b.WriteString("  (No models found in saved_models/)\n")
+		b.WriteString("  (No models found in models/)\n")
 	} else {
 		for i, model := range m.predictionForm.models {
 			b.WriteString(fmt.Sprintf("  %d: %s\n", i+1, filepath.Base(model)))
@@ -814,7 +815,7 @@ func (m *Model) updateSaveModelForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		modelName := m.saveModelInput.Value()
 		if modelName != "" {
-			modelPath := filepath.Join("saved_models", modelName+".json")
+			modelPath := filepath.Join("models", modelName+".json")
 			if err := m.modelData.SaveModel(modelPath); err != nil {
 				return m, func() tea.Msg { return errorMsg{err} }
 			}

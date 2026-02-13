@@ -1,7 +1,7 @@
 package main
 
 import (
-	"go-neuralnetwork/internal/tui"
+	"go-neuralnetwork/src/tui"
 )
 
 func main() {
