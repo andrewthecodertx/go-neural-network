@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
 	"go-neuralnetwork/src/data"
 	"go-neuralnetwork/src/neuralnetwork"
+	"go-neuralnetwork/src/visualization"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -127,6 +129,28 @@ func (m *Model) runTraining() tea.Cmd {
 		m.progressChan = progressChan
 		m.doneChan = doneChan
 
+		if enableViz {
+			go func() {
+				runtime.LockOSThread()
+				viz, err := visualization.NewNetworkVisualizer(900, 600)
+				if err != nil {
+					for range vizChan {
+					}
+					return
+				}
+				defer viz.Close()
+				for activations := range vizChan {
+					viz.HandleEvents()
+					if !viz.IsRunning() {
+						for range vizChan {
+						}
+						return
+					}
+					viz.RenderNetwork(nn, activations)
+				}
+			}()
+		}
+
 		// Goroutine to run training
 		go func() {
 			nn.Train(dataset.TrainInputs, dataset.TrainTargets, epochs, learningRate, errorGoal, progressChan, vizChan)
@@ -208,7 +232,6 @@ type Model struct {
 	lastLoss       float64
 	currentEpoch   int
 	totalEpochs    int
-	// visualizer      *viz.NetworkVisualizer // TODO: Enable when SDL2 is working
 	progressChan     <-chan float64
 	doneChan         <-chan trainingFinishedMsg
 	predictionValue  float64
