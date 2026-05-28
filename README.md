@@ -90,11 +90,10 @@ Adam or RMSprop.
 * **Regularization:** Add support for L1/L2 regularization to prevent overfitting.
 * **Testing:** Add a comprehensive test suite.
 
-## Contributing
-
-Contributions are welcome! If you'd like to improve this project, feel free to
-open an issue or submit a pull request.
-
 ## License
 
-This project is licensed under the terms of the [LICENSE](LICENSE) file.
+MIT, see [LICENSE](LICENSE).
+
+## Contributing
+
+PRs welcome. Please open an issue first for major changes.
