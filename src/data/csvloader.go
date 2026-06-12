@@ -33,10 +33,15 @@ func Shuffle(inputs, targets [][]float64) {
 
 func SplitData(inputs, targets [][]float64, splitRatio float64) (trainInputs, trainTargets, testInputs, testTargets [][]float64) {
 	splitIndex := int(float64(len(inputs)) * splitRatio)
-	trainInputs = inputs[:splitIndex]
-	trainTargets = targets[:splitIndex]
-	testInputs = inputs[splitIndex:]
-	testTargets = targets[splitIndex:]
+	// Use full slice expressions (low:high:max) so each returned slice has a
+	// capacity equal to its length. Without this the train slice's capacity
+	// overlaps the test region, and any append to it (or in-place mutation past
+	// its length) would silently corrupt the test set, since both views share
+	// one backing array. Capping forces a reallocation on append instead.
+	trainInputs = inputs[:splitIndex:splitIndex]
+	trainTargets = targets[:splitIndex:splitIndex]
+	testInputs = inputs[splitIndex:len(inputs):len(inputs)]
+	testTargets = targets[splitIndex:len(targets):len(targets)]
 	return
 }
 
