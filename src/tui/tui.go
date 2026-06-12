@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"go-neuralnetwork/src/data"
+	"go-neuralnetwork/src/engine"
 	"go-neuralnetwork/src/neuralnetwork"
 	"go-neuralnetwork/src/visualization"
 
@@ -28,27 +29,25 @@ type (
 		loss     float64
 	}
 	trainingFinishedMsg struct {
-		modelData *data.ModelData
-		testData  *data.Dataset
+		result engine.TrainResult
 	}
-	evaluationFinishedMsg             struct{ result data.EvaluationResult }
-	predictionResultMsg               struct{ result float64 }
-	predictionResultClassificationMsg struct{ result string }
-	errorMsg                          struct{ err error }
+	evaluationFinishedMsg struct{ result data.EvaluationResult }
+	predictionFinishedMsg struct{ result engine.PredictionResult }
+	errorMsg              struct{ err error }
 )
 
 // waitForEpoch returns a tea.Cmd that waits for the next epoch progress or training completion.
-func waitForEpoch(progressChan <-chan float64, epochNum int, doneChan <-chan trainingFinishedMsg) tea.Cmd {
+func waitForEpoch(progressChan <-chan float64, epochNum int, doneChan <-chan engine.TrainResult) tea.Cmd {
 	return func() tea.Msg {
 		select {
 		case loss, ok := <-progressChan:
 			if !ok {
 				// Channel closed, wait for done signal
-				return <-doneChan
+				return trainingFinishedMsg{result: <-doneChan}
 			}
 			return epochCompletedMsg{epochNum: epochNum, loss: loss}
-		case msg := <-doneChan:
-			return msg
+		case res := <-doneChan:
+			return trainingFinishedMsg{result: res}
 		}
 	}
 }
@@ -59,118 +58,70 @@ func (m *Model) runTraining() tea.Cmd {
 		if err != nil || csvIndex < 1 || csvIndex > len(m.trainingForm.csvFiles) {
 			return errorMsg{fmt.Errorf("invalid CSV file selection")}
 		}
-		csvPath := m.trainingForm.csvFiles[csvIndex-1]
-		layersStr := m.trainingForm.inputs[1].Value()
-		if layersStr == "" {
-			layersStr = "20,20"
+
+		raw := engine.RawTrainConfig{
+			CSVPath:           m.trainingForm.csvFiles[csvIndex-1],
+			HiddenLayers:      m.trainingForm.inputs[1].Value(),
+			HiddenActivations: m.trainingForm.inputs[2].Value(),
+			OutputActivation:  m.trainingForm.inputs[3].Value(),
+			Epochs:            m.trainingForm.inputs[4].Value(),
+			LearningRate:      m.trainingForm.inputs[5].Value(),
+			ErrorGoal:         m.trainingForm.inputs[6].Value(),
+			EnableViz:         strings.EqualFold(strings.TrimSpace(m.trainingForm.inputs[7].Value()), "y"),
 		}
-		hiddenLayers := []int{}
-		for _, s := range strings.Split(layersStr, ",") {
-			i, err := strconv.Atoi(strings.TrimSpace(s))
-			if err != nil {
-				return errorMsg{fmt.Errorf("invalid hidden layers: %w", err)}
-			}
-			hiddenLayers = append(hiddenLayers, i)
-		}
-		activationsStr := m.trainingForm.inputs[2].Value()
-		if activationsStr == "" {
-			activationsStr = "relu,relu"
-		}
-		hiddenActivations := strings.Split(activationsStr, ",")
-		outputActivation := m.trainingForm.inputs[3].Value()
-		if outputActivation == "" {
-			outputActivation = "linear"
-		}
-		epochsStr := m.trainingForm.inputs[4].Value()
-		if epochsStr == "" {
-			epochsStr = "1000"
-		}
-		epochs, err := strconv.Atoi(epochsStr)
+
+		cfg, err := engine.ParseTrainConfig(raw)
 		if err != nil {
-			return errorMsg{fmt.Errorf("invalid epochs value: %w", err)}
+			return errorMsg{err}
 		}
-		lrStr := m.trainingForm.inputs[5].Value()
-		if lrStr == "" {
-			lrStr = "0.001"
-		}
-		learningRate, err := strconv.ParseFloat(lrStr, 64)
+
+		handles, err := engine.StartTraining(cfg)
 		if err != nil {
-			return errorMsg{fmt.Errorf("invalid learning rate: %w", err)}
-		}
-		egStr := m.trainingForm.inputs[6].Value()
-		if egStr == "" {
-			egStr = "0.001"
-		}
-		errorGoal, err := strconv.ParseFloat(egStr, 64)
-		if err != nil {
-			return errorMsg{fmt.Errorf("invalid error goal: %w", err)}
-		}
-		enableViz := strings.ToLower(strings.TrimSpace(m.trainingForm.inputs[7].Value())) == "y"
-
-		// Load data
-		dataset, err := data.LoadCSV(csvPath, 0.8)
-		if err != nil {
-			return errorMsg{fmt.Errorf("failed to load CSV data: %w", err)}
+			return errorMsg{err}
 		}
 
-		// Initialize network
-		nn := neuralnetwork.InitNetwork(dataset.InputSize, hiddenLayers, dataset.OutputSize, hiddenActivations, outputActivation)
+		// Store channels on the model so the TUI can poll for epoch progress.
+		m.progressChan = handles.Progress
+		m.doneChan = handles.Done
+		m.totalEpochs = cfg.Epochs
 
-		// This channel will receive training progress
-		progressChan := make(chan float64)
-		doneChan := make(chan trainingFinishedMsg, 1)
-		var vizChan chan [][]float64
-
-		if enableViz {
-			vizChan = make(chan [][]float64)
+		// The SDL2 visualizer is a UI concern, so it lives here rather than in
+		// the engine. It consumes the engine's activation snapshots.
+		if handles.Viz != nil {
+			startVisualizer(handles.Network, handles.Viz)
 		}
-
-		// Store channels on model for epoch listening
-		m.progressChan = progressChan
-		m.doneChan = doneChan
-
-		if enableViz {
-			go func() {
-				runtime.LockOSThread()
-				viz, err := visualization.NewNetworkVisualizer(900, 600)
-				if err != nil {
-					for range vizChan {
-					}
-					return
-				}
-				defer viz.Close()
-				for activations := range vizChan {
-					viz.HandleEvents()
-					if !viz.IsRunning() {
-						for range vizChan {
-						}
-						return
-					}
-					viz.RenderNetwork(nn, activations)
-				}
-			}()
-		}
-
-		// Goroutine to run training
-		go func() {
-			nn.Train(dataset.TrainInputs, dataset.TrainTargets, epochs, learningRate, errorGoal, progressChan, vizChan)
-			modelData := &data.ModelData{
-				NN:         nn,
-				InputMins:  dataset.InputMins,
-				InputMaxs:  dataset.InputMaxs,
-				TargetMins: dataset.TargetMins,
-				TargetMaxs: dataset.TargetMaxs,
-				ClassMap:   dataset.ClassMap,
-			}
-			doneChan <- trainingFinishedMsg{modelData: modelData, testData: dataset}
-		}()
 
 		return trainingStartedMsg{}
 	}
 }
 
+// startVisualizer drives an SDL2 window from a stream of activation snapshots.
+// It runs on its own OS-locked thread (required by SDL) and drains the channel
+// even if the window fails to open, so training is never blocked.
+func startVisualizer(nn *neuralnetwork.NeuralNetwork, vizChan <-chan [][]float64) {
+	go func() {
+		runtime.LockOSThread()
+		viz, err := visualization.NewNetworkVisualizer(900, 600)
+		if err != nil {
+			for range vizChan {
+			}
+			return
+		}
+		defer viz.Close()
+		for activations := range vizChan {
+			viz.HandleEvents()
+			if !viz.IsRunning() {
+				for range vizChan {
+				}
+				return
+			}
+			viz.RenderNetwork(nn, activations)
+		}
+	}()
+}
+
 func findCsvFiles() tea.Msg {
-	files, err := filepath.Glob("datasets/*.csv")
+	files, err := engine.FindDatasets()
 	if err != nil {
 		return errorMsg{err}
 	}
@@ -178,7 +129,7 @@ func findCsvFiles() tea.Msg {
 }
 
 func findModels() tea.Msg {
-	files, err := filepath.Glob("models/*.json")
+	files, err := engine.FindModels()
 	if err != nil {
 		return errorMsg{err}
 	}
@@ -218,22 +169,22 @@ var (
 
 // Model represents the state of the entire application.
 type Model struct {
-	state          sessionState
-	menuCursor     int
-	menuChoices    []string
-	trainingForm   trainingFormModel
-	predictionForm predictionFormModel
-	saveModelInput textinput.Model
-	modelData      *data.ModelData
-	lastError      error
-	quitting       bool
-	terminalWidth  int
-	terminalHeight int
-	lastLoss       float64
-	currentEpoch   int
-	totalEpochs    int
+	state            sessionState
+	menuCursor       int
+	menuChoices      []string
+	trainingForm     trainingFormModel
+	predictionForm   predictionFormModel
+	saveModelInput   textinput.Model
+	modelData        *data.ModelData
+	lastError        error
+	quitting         bool
+	terminalWidth    int
+	terminalHeight   int
+	lastLoss         float64
+	currentEpoch     int
+	totalEpochs      int
 	progressChan     <-chan float64
-	doneChan         <-chan trainingFinishedMsg
+	doneChan         <-chan engine.TrainResult
 	predictionValue  float64
 	predictionClass  string
 	evaluationResult data.EvaluationResult
@@ -356,17 +307,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case trainingStartedMsg:
-		enableViz := strings.ToLower(strings.TrimSpace(m.trainingForm.inputs[7].Value())) == "y"
+		enableViz := strings.EqualFold(strings.TrimSpace(m.trainingForm.inputs[7].Value()), "y")
 		if enableViz {
 			m.state = visualizationMode
 		} else {
 			m.state = trainingInProgress
 		}
-		epochs, _ := strconv.Atoi(m.trainingForm.inputs[4].Value())
-		if epochs == 0 {
-			epochs = 1000
-		}
-		m.totalEpochs = epochs
 		return m, waitForEpoch(m.progressChan, 1, m.doneChan)
 
 	case epochCompletedMsg:
@@ -375,11 +321,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitForEpoch(m.progressChan, msg.epochNum+1, m.doneChan)
 
 	case trainingFinishedMsg:
-		m.modelData = msg.modelData
+		m.modelData = msg.result.Model
 		m.state = evaluation
+		result := msg.result
 		return m, func() tea.Msg {
-			result := data.Evaluate(msg.modelData, msg.testData.TestInputs, msg.testData.TestTargets)
-			return evaluationFinishedMsg{result: result}
+			return evaluationFinishedMsg{result: engine.Evaluate(result)}
 		}
 
 	case evaluationFinishedMsg:
@@ -387,14 +333,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = saveModelForm
 		return m, nil
 
-	case predictionResultMsg:
+	case predictionFinishedMsg:
 		m.state = predictionResult
-		m.predictionValue = msg.result
-		return m, nil
-
-	case predictionResultClassificationMsg:
-		m.state = predictionResult
-		m.predictionClass = msg.result
+		if msg.result.IsClassification {
+			m.predictionClass = msg.result.Class
+		} else {
+			m.predictionValue = msg.result.Value
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -769,58 +714,22 @@ func (m *Model) runPrediction() tea.Cmd {
 		if err != nil || modelIndex < 1 || modelIndex > len(m.predictionForm.models) {
 			return errorMsg{fmt.Errorf("invalid model selection")}
 		}
-		modelPath := m.predictionForm.models[modelIndex-1]
 
-		modelData, err := data.LoadModel(modelPath)
+		modelData, err := engine.LoadModelForPrediction(m.predictionForm.models[modelIndex-1])
 		if err != nil {
-			return errorMsg{fmt.Errorf("failed to load model: %w", err)}
-		}
-		if err := modelData.NN.SetActivationFunctions(); err != nil {
-			return errorMsg{fmt.Errorf("failed to set activation functions: %w", err)}
+			return errorMsg{err}
 		}
 
-		inputStrs := strings.Split(strings.TrimSpace(m.predictionForm.inputs[1].Value()), ",")
-		if len(inputStrs) != modelData.NN.NumInputs {
-			return errorMsg{fmt.Errorf("expected %d input values, but got %d", modelData.NN.NumInputs, len(inputStrs))}
+		rawInput, err := engine.ParseInputVector(m.predictionForm.inputs[1].Value())
+		if err != nil {
+			return errorMsg{err}
 		}
 
-		predictionInput := make([]float64, modelData.NN.NumInputs)
-		for i, s := range inputStrs {
-			val, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
-			if err != nil {
-				return errorMsg{fmt.Errorf("invalid input value: %v", err)}
-			}
-			rangeVal := modelData.InputMaxs[i] - modelData.InputMins[i]
-			if rangeVal == 0 {
-				predictionInput[i] = 0
-			} else {
-				predictionInput[i] = (val - modelData.InputMins[i]) / rangeVal
-			}
+		result, err := engine.Predict(modelData, rawInput)
+		if err != nil {
+			return errorMsg{err}
 		}
-
-		_, predictionOutput := modelData.NN.FeedForward(predictionInput)
-
-		if modelData.ClassMap != nil {
-			// Classification
-			max := -1.0
-			maxIndex := -1
-			for i, val := range predictionOutput {
-				if val > max {
-					max = val
-					maxIndex = i
-				}
-			}
-			for class, index := range modelData.ClassMap {
-				if index == maxIndex {
-					return predictionResultClassificationMsg{result: class}
-				}
-			}
-			return errorMsg{fmt.Errorf("could not determine class from prediction")}
-		} else {
-			// Regression
-			finalPrediction := predictionOutput[0]*(modelData.TargetMaxs[0]-modelData.TargetMins[0]) + modelData.TargetMins[0]
-			return predictionResultMsg{result: finalPrediction}
-		}
+		return predictionFinishedMsg{result: result}
 	}
 }
 
@@ -838,8 +747,7 @@ func (m *Model) updateSaveModelForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		modelName := m.saveModelInput.Value()
 		if modelName != "" {
-			modelPath := filepath.Join("models", modelName+".json")
-			if err := m.modelData.SaveModel(modelPath); err != nil {
+			if _, err := engine.SaveModel(m.modelData, modelName); err != nil {
 				return m, func() tea.Msg { return errorMsg{err} }
 			}
 		}
